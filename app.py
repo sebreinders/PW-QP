@@ -4,72 +4,91 @@ from io import BytesIO
 import PyPDF2
 import re
 from flask import Flask, request, render_template_string
+import logging
+import os
 
-# URL du flux RSS à analyser
+# Configuration du logging pour afficher les messages de debug dans la console
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# URL du flux RSS
 RSS_URL = "https://www.parlement-wallonie.be/actu/rss_doc_generator.php"
 
-# Analyse du flux RSS
+logging.debug("Début du parsing du flux RSS")
 feed = feedparser.parse(RSS_URL)
 
-# Liste qui contiendra les publications dont on a pu extraire le contenu PDF
-# Chaque élément est un dictionnaire contenant : titre, lien, liste des URLs PDF et le texte extrait
+# Liste qui contiendra les publications dont le texte des PDF a été extrait
 publications = []
 
-# Parcours de chaque entrée du flux RSS
+# Parcours de chaque item du flux RSS
 for entry in feed.entries:
+    # Affichage des clés disponibles pour vérifier la structure de l'item
+    logging.debug("Clés disponibles dans l'item : %s", list(entry.keys()))
+    
     title = entry.get("title", "Sans titre")
     link = entry.get("link", "")
+    logging.debug("Traitement de l'item : %s - Lien principal : %s", title, link)
+    
     pdf_urls = []
     
-    # Vérification de la présence d'enclosures dans l'entrée
+    # Vérification de la présence d'enclosures
     if 'enclosures' in entry:
         for enclosure in entry.enclosures:
             pdf_url = enclosure.get("href", "")
-            # On considère que le lien correspond à un PDF si son URL se termine par .pdf
             if pdf_url.lower().endswith('.pdf'):
+                logging.debug("PDF détecté dans les enclosures : %s", pdf_url)
                 pdf_urls.append(pdf_url)
     
-    # Parfois, le lien principal de l'entrée peut pointer directement vers un PDF
+    # Si aucune enclosure ne correspond, on vérifie si le lien principal est un PDF
     if not pdf_urls and link.lower().endswith('.pdf'):
+        logging.debug("Le lien principal est identifié comme PDF : %s", link)
         pdf_urls.append(link)
+    else:
+        logging.debug("Le lien principal n'est pas un PDF : %s", link)
     
-    # Variable qui contiendra le texte extrait de tous les PDF de cette publication
+    # Variable qui contiendra le texte extrait de tous les PDF de l'item
     text_content = ""
     
-    # Pour chaque URL PDF trouvée, on tente de télécharger et d'extraire le texte
+    # Parcours de chaque URL PDF détecté
     for pdf_url in pdf_urls:
         try:
-            print(f"Téléchargement du PDF : {pdf_url}")
-            response = requests.get(pdf_url)
-            response.raise_for_status()  # Pour lever une exception en cas d'erreur HTTP
+            logging.debug("Tentative de téléchargement du PDF : %s", pdf_url)
+            response = requests.get(pdf_url, timeout=10)
+            response.raise_for_status()  # Lève une exception si le téléchargement échoue
+            logging.debug("PDF téléchargé avec succès : %s - Taille : %d octets", pdf_url, len(response.content))
+            
             pdf_file = BytesIO(response.content)
             
-            # Utilisation de PyPDF2 pour lire le PDF
+            # Extraction du texte avec PyPDF2
             reader = PyPDF2.PdfReader(pdf_file)
             pdf_text = ""
-            for page in reader.pages:
+            for i, page in enumerate(reader.pages):
                 page_text = page.extract_text() or ""
+                logging.debug("Page %d - Nombre de caractères extraits : %d", i, len(page_text))
                 pdf_text += page_text + "\n"
             
             text_content += pdf_text
         except Exception as e:
-            print(f"Erreur lors du traitement du PDF {pdf_url} : {e}")
+            logging.error("Erreur lors du téléchargement ou du traitement du PDF %s : %s", pdf_url, e)
     
-    # On conserve la publication uniquement si du texte a pu être extrait
+    # On ajoute la publication à la liste si du texte a été extrait
     if text_content.strip():
+        logging.debug("Publication ajoutée : %s avec %d caractères extraits", title, len(text_content))
         publications.append({
             "title": title,
             "link": link,
             "pdf_urls": pdf_urls,
             "text": text_content
         })
+    else:
+        logging.debug("Aucun texte extrait pour la publication : %s", title)
 
-print(f"Nombre de publications avec texte extrait : {len(publications)}")
+logging.debug("Nombre de publications avec texte extrait : %d", len(publications))
+
 
 # Création de l'application Flask
 app = Flask(__name__)
 
-# Modèle HTML intégrant le formulaire et l'affichage des résultats
+# Template HTML intégrant le formulaire et l'affichage des résultats de recherche
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="fr">
@@ -112,38 +131,32 @@ HTML_TEMPLATE = '''
 
 @app.route('/', methods=['GET'])
 def index():
-    """Page d'accueil affichant uniquement le formulaire de recherche."""
+    """Page d'accueil affichant le formulaire de recherche."""
     return render_template_string(HTML_TEMPLATE)
 
 @app.route('/search', methods=['GET'])
 def search():
     """
-    Route qui traite la recherche :
-    - Récupération de la requête utilisateur (mots-clés)
-    - Recherche des occurrences dans les textes extraits de chaque publication
-    - Affichage d’un extrait contextuel pour chaque occurrence trouvée
+    Route de recherche :
+    - Récupère la requête de l'utilisateur.
+    - Parcourt le texte extrait des PDF pour trouver les occurrences des mots recherchés.
+    - Affiche un extrait contextuel pour chaque occurrence.
     """
     query = request.args.get('query', '')
     if not query:
         return render_template_string(HTML_TEMPLATE, results=[])
     
-    # Division de la requête en plusieurs mots (supposés séparés par des espaces)
     words = query.split()
-    
     results = []
-    # Nombre de caractères à afficher avant et après le mot recherché pour donner un contexte
-    context_chars = 50
+    context_chars = 50  # Nombre de caractères à afficher autour du mot recherché
     
     # Parcours de chaque publication
     for pub in publications:
         text = pub['text']
         occurrences = []
-        # Pour chaque mot de la recherche, on effectue une recherche insensible à la casse
         for word in words:
-            # Construction d'une expression régulière pour capter le contexte
             pattern = re.compile(r'(.{0,' + str(context_chars) + '})(' + re.escape(word) + r')(.{0,' + str(context_chars) + '})', re.IGNORECASE)
             for match in pattern.finditer(text):
-                # Concaténation du contexte trouvé
                 context = match.group(1) + match.group(2) + match.group(3)
                 occurrences.append(context.strip())
         if occurrences:
@@ -156,6 +169,6 @@ def search():
     return render_template_string(HTML_TEMPLATE, results=results)
 
 if __name__ == '__main__':
-    import os
-    port = int(os.environ.get("PORT", 5000))  # Utilise le port défini par Render ou 5000 par défaut
+    # Utilisation du port défini par la variable d'environnement PORT (pour Render) ou 5000 par défaut
+    port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
