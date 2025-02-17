@@ -156,5 +156,6 @@ def search():
     return render_template_string(HTML_TEMPLATE, results=results)
 
 if __name__ == '__main__':
-    # Lancement de l'application Flask en mode debug
-    app.run(debug=True)
+    import os
+    port = int(os.environ.get("PORT", 5000))  # Utilise le port défini par Render ou 5000 par défaut
+    app.run(host='0.0.0.0', port=port, debug=True)
