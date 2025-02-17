@@ -107,7 +107,7 @@ logging.debug("Nombre de publications avec texte extrait : %d", len(publications
 app = Flask(__name__)
 
 # Template HTML intégrant le formulaire et l'affichage des résultats de recherche
-HTML_TEMPLATE = '''
+HTML_TEMPLATE = '
 <!DOCTYPE html>
 <html lang="fr">
 <head>
