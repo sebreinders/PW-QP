@@ -16,6 +16,9 @@ RSS_URL = "https://www.parlement-wallonie.be/actu/rss_doc_generator.php"
 logging.debug("Début du parsing du flux RSS")
 feed = feedparser.parse(RSS_URL)
 
+# Affichage du nombre d'items récupérés pour s'assurer que le flux est bien lu
+logging.debug("Nombre d'items dans le flux RSS : %d", len(feed.entries))
+
 # Liste qui contiendra les publications dont le texte des PDF a été extrait
 publications = []
 
@@ -30,29 +33,31 @@ for entry in feed.entries:
     
     pdf_urls = []
     
-    # Vérification de la présence d'enclosures
+    # Vérification de la présence d'enclosures (bien que votre flux semble ne pas en contenir)
     if 'enclosures' in entry:
         for enclosure in entry.enclosures:
             pdf_url = enclosure.get("href", "")
-            if pdf_url.lower().endswith('.pdf'):
+            if pdf_url.lower().strip().endswith('.pdf'):
                 logging.debug("PDF détecté dans les enclosures : %s", pdf_url)
                 pdf_urls.append(pdf_url)
     
-    # Si aucune enclosure ne correspond, on vérifie si le lien principal est un PDF
-    if not pdf_urls and link.lower().endswith('.pdf'):
+    # Si aucune enclosure n'est trouvée, on vérifie si le lien principal est un PDF
+    if not pdf_urls and link.lower().strip().endswith('.pdf'):
         logging.debug("Le lien principal est identifié comme PDF : %s", link)
         pdf_urls.append(link)
     else:
-        logging.debug("Le lien principal n'est pas un PDF : %s", link)
+        logging.debug("Le lien principal n'est pas identifié comme PDF ou un PDF a déjà été détecté : %s", link)
     
     # Variable qui contiendra le texte extrait de tous les PDF de l'item
     text_content = ""
     
-    # Parcours de chaque URL PDF détecté
+    # Parcours de chaque URL PDF détectée
     for pdf_url in pdf_urls:
         try:
             logging.debug("Tentative de téléchargement du PDF : %s", pdf_url)
-            response = requests.get(pdf_url, timeout=10)
+            # Ajout d'un header User-Agent pour simuler un navigateur
+            headers = {"User-Agent": "Mozilla/5.0"}
+            response = requests.get(pdf_url, headers=headers, timeout=10)
             response.raise_for_status()  # Lève une exception si le téléchargement échoue
             logging.debug("PDF téléchargé avec succès : %s - Taille : %d octets", pdf_url, len(response.content))
             
