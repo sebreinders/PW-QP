@@ -12,12 +12,26 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 
 # URL du flux RSS
 RSS_URL = "https://www.parlement-wallonie.be/actu/rss_doc_generator.php"
+# Définition des headers pour simuler un navigateur et indiquer les types de contenu acceptés
+headers = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/rss+xml, application/xml, text/xml"
+}
 
-logging.debug("Début du parsing du flux RSS")
-feed = feedparser.parse(RSS_URL)
+logging.debug("Tentative de récupération du flux RSS avec headers")
+try:
+    response = requests.get(RSS_URL, headers=headers, timeout=10)
+    response.raise_for_status()  # Lève une exception en cas d'erreur HTTP
+    rss_content = response.text
+    # Affichage des 500 premiers caractères pour vérifier le contenu récupéré
+    logging.debug("Flux RSS récupéré (500 premiers caractères) : %s", rss_content[:500])
+except Exception as e:
+    logging.error("Erreur lors de la récupération du flux RSS: %s", e)
+    rss_content = ""
 
-# Affichage du nombre d'items récupérés pour s'assurer que le flux est bien lu
-logging.debug("Nombre d'items dans le flux RSS : %d", len(feed.entries))
+# Parsing du contenu récupéré avec feedparser
+feed = feedparser.parse(rss_content)
+logging.debug("Nombre d'items dans le flux RSS après parsing : %d", len(feed.entries))
 
 # Liste qui contiendra les publications dont le texte des PDF a été extrait
 publications = []
@@ -33,11 +47,11 @@ for entry in feed.entries:
     
     pdf_urls = []
     
-    # Vérification de la présence d'enclosures (bien que votre flux semble ne pas en contenir)
+    # Vérification de la présence d'enclosures (si disponibles)
     if 'enclosures' in entry:
         for enclosure in entry.enclosures:
-            pdf_url = enclosure.get("href", "")
-            if pdf_url.lower().strip().endswith('.pdf'):
+            pdf_url = enclosure.get("href", "").strip()
+            if pdf_url.lower().endswith('.pdf'):
                 logging.debug("PDF détecté dans les enclosures : %s", pdf_url)
                 pdf_urls.append(pdf_url)
     
@@ -55,13 +69,12 @@ for entry in feed.entries:
     for pdf_url in pdf_urls:
         try:
             logging.debug("Tentative de téléchargement du PDF : %s", pdf_url)
-            # Ajout d'un header User-Agent pour simuler un navigateur
-            headers = {"User-Agent": "Mozilla/5.0"}
-            response = requests.get(pdf_url, headers=headers, timeout=10)
-            response.raise_for_status()  # Lève une exception si le téléchargement échoue
-            logging.debug("PDF téléchargé avec succès : %s - Taille : %d octets", pdf_url, len(response.content))
+            # Ajout du header User-Agent pour simuler un navigateur
+            pdf_response = requests.get(pdf_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            pdf_response.raise_for_status()
+            logging.debug("PDF téléchargé avec succès : %s - Taille : %d octets", pdf_url, len(pdf_response.content))
             
-            pdf_file = BytesIO(response.content)
+            pdf_file = BytesIO(pdf_response.content)
             
             # Extraction du texte avec PyPDF2
             reader = PyPDF2.PdfReader(pdf_file)
@@ -130,50 +143,4 @@ HTML_TEMPLATE = '''
         </div>
     {% endfor %}
     {% endif %}
-</body>
-</html>
-'''
-
-@app.route('/', methods=['GET'])
-def index():
-    """Page d'accueil affichant le formulaire de recherche."""
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/search', methods=['GET'])
-def search():
-    """
-    Route de recherche :
-    - Récupère la requête de l'utilisateur.
-    - Parcourt le texte extrait des PDF pour trouver les occurrences des mots recherchés.
-    - Affiche un extrait contextuel pour chaque occurrence.
-    """
-    query = request.args.get('query', '')
-    if not query:
-        return render_template_string(HTML_TEMPLATE, results=[])
-    
-    words = query.split()
-    results = []
-    context_chars = 50  # Nombre de caractères à afficher autour du mot recherché
-    
-    # Parcours de chaque publication
-    for pub in publications:
-        text = pub['text']
-        occurrences = []
-        for word in words:
-            pattern = re.compile(r'(.{0,' + str(context_chars) + '})(' + re.escape(word) + r')(.{0,' + str(context_chars) + '})', re.IGNORECASE)
-            for match in pattern.finditer(text):
-                context = match.group(1) + match.group(2) + match.group(3)
-                occurrences.append(context.strip())
-        if occurrences:
-            results.append({
-                "title": pub['title'],
-                "link": pub['link'],
-                "occurrences": occurrences
-            })
-    
-    return render_template_string(HTML_TEMPLATE, results=results)
-
-if __name__ == '__main__':
-    # Utilisation du port défini par la variable d'environnement PORT (pour Render) ou 5000 par défaut
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+</bo
