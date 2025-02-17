@@ -1,0 +1,4 @@
+feedparser
+requests
+PyPDF2
+flask
