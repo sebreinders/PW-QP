@@ -107,7 +107,7 @@ logging.debug("Nombre de publications avec texte extrait : %d", len(publications
 app = Flask(__name__)
 
 # Template HTML intégrant le formulaire et l'affichage des résultats de recherche
-HTML_TEMPLATE = '
+HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -143,4 +143,50 @@ HTML_TEMPLATE = '
         </div>
     {% endfor %}
     {% endif %}
-</bo
+</body>
+</html>
+'''
+
+@app.route('/', methods=['GET'])
+def index():
+    """Page d'accueil affichant le formulaire de recherche."""
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/search', methods=['GET'])
+def search():
+    """
+    Route de recherche :
+    - Récupère la requête de l'utilisateur.
+    - Parcourt le texte extrait des PDF pour trouver les occurrences des mots recherchés.
+    - Affiche un extrait contextuel pour chaque occurrence.
+    """
+    query = request.args.get('query', '')
+    if not query:
+        return render_template_string(HTML_TEMPLATE, results=[])
+    
+    words = query.split()
+    results = []
+    context_chars = 50  # Nombre de caractères à afficher autour du mot recherché
+    
+    # Parcours de chaque publication
+    for pub in publications:
+        text = pub['text']
+        occurrences = []
+        for word in words:
+            pattern = re.compile(r'(.{0,' + str(context_chars) + '})(' + re.escape(word) + r')(.{0,' + str(context_chars) + '})', re.IGNORECASE)
+            for match in pattern.finditer(text):
+                context = match.group(1) + match.group(2) + match.group(3)
+                occurrences.append(context.strip())
+        if occurrences:
+            results.append({
+                "title": pub['title'],
+                "link": pub['link'],
+                "occurrences": occurrences
+            })
+    
+    return render_template_string(HTML_TEMPLATE, results=results)
+
+if __name__ == '__main__':
+    # Utilisation du port défini par la variable d'environnement PORT (pour Render) ou 5000 par défaut
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
